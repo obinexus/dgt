@@ -549,3 +549,185 @@ The goal of the Witness Ledger system is to **maintain coherence across topologi
 By encoding these relationships algebraically, HDIS provides a measurable standard for coherence persistence in hybrid static–dynamic infrastructures.
 
 
+
+
+---
+
+
+\subsection{Coherence Receipt Integrity Function (CRIF) over DAGs}
+
+\paragraph{Purpose.}  
+The Coherence Receipt Integrity Function (CRIF) verifies and scores coherence across an HDIS Witness Ledger distributed over a DAG \(G=(V,E)\). It combines (a) cryptographic/structural integrity of receipts in the DAG and (b) QA gate performance (true/false positive/negative rates) across pipeline gates \(Z \rightarrow Y \rightarrow X\). The output is a scalar coherence score \(C \in [0,1]\) and a pass/fail result against a target threshold (typ. \(C_{\text{req}} = 0.954\)).
+
+\bigskip
+\noindent\textbf{Notation.}
+\begin{itemize}
+  \item \(G=(V,E)\) : directed acyclic graph representing HDIS topology (nodes = actor/agent components; edges = observer-consumer transactions).
+  \item \(L\) : Witness Ledger, set of receipts \(L = \{ r_e \mid e\in E \}\). Each receipt \(r_e = (o_i,c_j,\phi_{ij},\tau,\sigma)\) contains a coherence measure \(\phi_{ij}\), timestamp \(\tau\), and signature/hash \(\sigma\).
+  \item Pipeline stages: \(Z \xrightarrow{g_Z} Y \xrightarrow{g_Y} X\). Each gate \(g\) is a QA gate with confusion counts \((\mathrm{TP},\mathrm{FP},\mathrm{FN},\mathrm{TN})\).
+  \item \(Q(g)\) : QA performance scalar for gate \(g\) (we use F1 by default).
+  \item \(\mathrm{HashValid}(r_e)\in\{0,1\}\) : 1 if receipt \(r_e\)'s signature \(\sigma\) validates cryptographically and matches parent-child state mapping; 0 otherwise.
+  \item \(\mathbf{w} = \{w_e\}_{e\in E}\) : optional per-edge weights (defaults \(w_e = 1/|E|\)).
+\end{itemize}
+
+\paragraph{QA Gate Metrics.}  
+For a gate \(g\) with confusion counts \(\mathrm{TP},\mathrm{FP},\mathrm{FN},\mathrm{TN}\):
+\[
+\text{Precision}_g = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}},\qquad
+\text{Recall}_g = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}}
+\]
+F\(_1\) score:
+\[
+Q(g) \equiv F_1(g) = \frac{2\cdot\text{Precision}_g\cdot\text{Recall}_g}{\text{Precision}_g+\text{Recall}_g}
+\]
+(If TP+FP = 0 set Precision = 0; if TP+FN = 0 set Recall = 0; handle division-by-zero explicitly.)
+
+\paragraph{Pipeline Reduction Mapping \(Z\to Y\to X\).}  
+Treat the pipeline as functor reductions \(\Phi_{Z\to Y}\) and \(\Phi_{Y\to X}\) (these are mappings that reduce higher-level observables \(Z\) into system-agnostic representations \(Y\), then into unit/component models \(X\)). For each gate \(g\) in these reductions compute \(Q(g)\). For a pipeline segment \(P = \{g_1,\dots,g_k\}\) define the segment QA score:
+\[
+Q(P) = \mathrm{Agg}(\,Q(g_1),\dots,Q(g_k)\,)
+\]
+where \(\mathrm{Agg}\) is a robust aggregator (default: weighted mean by gate importance).
+
+\paragraph{Receipt Integrity Score.}  
+Compute the fraction of valid receipts:
+\[
+I_{\text{hash}}(L) \;=\; \frac{\sum_{e\in E} \mathrm{HashValid}(r_e)\;w_e}{\sum_{e\in E} w_e} \in [0,1]
+\]
+This is the structural / cryptographic integrity component.
+
+\paragraph{Aggregate QA Score.}  
+If the system defines \(m\) pipeline segments \(P_1,\dots,P_m\) (e.g., multiple \(Z\to Y\to X\) flows), compute:
+\[
+Q_{\text{agg}} \;=\; \sum_{i=1}^m \alpha_i \, Q(P_i) \qquad\text{with }\sum_i \alpha_i = 1, \; \alpha_i\ge 0
+\]
+(default equal weights if no importance ranking exists).
+
+\paragraph{Coherence Receipt Integrity Function (CRIF).}  
+Combine integrity and QA into final coherence score \(C\):
+\[
+C \;=\; \lambda\; I_{\text{hash}}(L) \;+\; (1-\lambda)\; Q_{\text{agg}}
+\]
+where \(\lambda\in[0,1]\) weights structural integrity vs QA performance. Recommended default: \(\lambda = 0.6\) (integrity prioritized), \(1-\lambda = 0.4\).
+
+\paragraph{Decision Rule.}  
+System passes coherence if:
+\[
+C \ge C_{\text{req}}
+\]
+Typical target: \(C_{\text{req}}=0.954\) (95.4\%).
+
+\bigskip
+\noindent\textbf{Numeric example (gate-level).}  
+Consider one gate \(g\) with confusion counts: \(\mathrm{TP}=80\), \(\mathrm{FP}=20\), \(\mathrm{FN}=10\), \(\mathrm{TN}=890\).
+
+Compute:
+\[
+\text{Precision} = \frac{80}{80+20} = \frac{80}{100} = 0.8
+\]
+\[
+\text{Recall} = \frac{80}{80+10} = \frac{80}{90} \approx 0.8888889
+\]
+F\(_1\):
+\[
+F_1 = \frac{2\cdot 0.8 \cdot 0.8888889}{0.8 + 0.8888889}
+= \frac{2\cdot 0.71111112}{1.6888889}
+= \frac{1.42222224}{1.6888889}
+\approx 0.8421053
+\]
+So \(Q(g)\approx 0.8421\).
+
+If we have three pipeline segments with \(Q(P_1)=0.84\), \(Q(P_2)=0.92\), \(Q(P_3)=0.79\) and equal weights \(\alpha_i=1/3\), then:
+\[
+Q_{\text{agg}} = \frac{0.84+0.92+0.79}{3} = \frac{2.55}{3} = 0.85
+\]
+Suppose \(I_{\text{hash}}(L)=0.98\) (98\% receipts valid). With \(\lambda=0.6\):
+\[
+C = 0.6\cdot 0.98 + 0.4\cdot 0.85 = 0.588 + 0.34 = 0.928
+\]
+Result: \(C = 0.928 < 0.954\) — system fails the coherence target; remedial action recommended (re-run QA gates or restore receipts).
+
+\bigskip
+\noindent\textbf{Algorithm (pseudocode).}  
+\begin{verbatim}
+# Input: DAG G=(V,E), Witness Ledger L, pipeline definitions P1..Pm
+# Per-edge weights w_e (optional), gate importance alpha_i (per pipeline)
+# Parameters: lambda, C_req
+
+function ComputeCRIF(G, L, Pipelines, w, alpha, lambda):
+    # 1. Validate receipts across edges
+    valid_sum = 0
+    total_w = 0
+    for e in E:
+        r = L.lookup(e)
+        if r is None:
+            valid = 0
+        else:
+            valid = VerifyReceiptHashAndParentState(r, e) ? 1 : 0
+        we = w.get(e, 1/|E|)
+        valid_sum += valid * we
+        total_w += we
+    I_hash = valid_sum / total_w
+
+    # 2. Compute QA per pipeline
+    Q_list = []
+    for P in Pipelines:
+        # P.gates = list of gates gi each with TP,FP,FN,TN and weight wi
+        numerator = 0
+        denom = 0
+        for gi, wi in P.gates:
+            precision = safe_div(gi.TP, gi.TP + gi.FP)
+            recall    = safe_div(gi.TP, gi.TP + gi.FN)
+            if (precision + recall) == 0:
+                f1 = 0
+            else:
+                f1 = (2 * precision * recall) / (precision + recall)
+            numerator += wi * f1
+            denom += wi
+        Qp = numerator / denom   # aggregate for pipeline
+        Q_list.append(Qp)
+
+    # 3. Weighted aggregate Q
+    Q_agg = sum(alpha[i] * Q_list[i] for i in range(len(Q_list)))
+
+    # 4. Final CRIF score
+    C = lambda * I_hash + (1 - lambda) * Q_agg
+    pass_fail = (C >= C_req)
+    return { "C": C, "I_hash": I_hash, "Q_agg": Q_agg, "pass": pass_fail }
+\end{verbatim}
+
+\paragraph{Receipt verification routine (high level).}
+\[
+\text{VerifyReceiptHashAndParentState}(r_e,e) := 
+\Bigl( \sigma_e \stackrel{?}{=} \mathrm{H}\bigl( \phi_{parent}, \tau_e, \mathrm{state}_e \bigr) \Bigr)
+\land \Bigl( \text{topology-consistent}(e)\Bigr)
+\]
+where \(\mathrm{H}(\cdot)\) is a cryptographic hash and `topology-consistent` checks the parent node states exist and match the recorded timestamps within an allowed skew \(\Delta t\).
+
+\paragraph{Complexity.}  
+- Receipt validation: \(O(|E|)\) cryptographic hash checks.  
+- QA aggregation: proportional to total number of gates across pipelines.  
+- DAG traversal for state-checks/topology validation: \(O(|V|+|E|)\).  
+With the auxiliary-space constraint in the Functor Framework, topological traversal can be implemented with \(O(\log |V|)\) auxiliary stack by iterative topological enumeration with checkpointed frontier (practical implementations may use streaming/iterator patterns).
+
+\paragraph{Properties and guarantees.}
+\begin{itemize}
+  \item \textbf{Soundness:} If \(C\ge C_{\text{req}}\) then (with high probability) the ledger is structurally intact and QA gates meet aggregate quality levels.
+  \item \textbf{Transparency:} CRIF components (\(I_{\text{hash}}\), \(Q_{\text{agg}}\)) are auditable and decomposable per edge/gate.
+  \item \textbf{Actionability:} When \(C < C_{\text{req}}\) the system outputs per-pipeline and per-edge diagnostics to guide targeted remediation (replay, re-test, re-seal receipts).
+  \item \textbf{Extensibility:} Additional metrics (precision/recall per-class, ROC AUC, calibration error) can be plugged into \(Q(g)\) without changing CRIF core.
+\end{itemize}
+
+\paragraph{Recommended defaults (practical).}
+\begin{itemize}
+  \item \(\lambda = 0.6\) (integrity emphasis), \(C_{\text{req}} = 0.954\).  
+  \item QA aggregator: weighted mean with gate weights proportional to criticality (safety-critical gates get higher weight).  
+  \item Per-edge weight \(w_e\): proportionate to edge impact (e.g., hub edges get higher weight).
+  \item Timestamp skew tolerance \(\Delta t\): set per topology (smaller for star/bus; larger for wide-area clusters).
+\end{itemize}
+
+\bigskip
+\noindent\textbf{Integration notes.}  
+- Hook `ComputeCRIF` into your HDIS witness-aggregation pipeline. Run it periodically (synchronous integrity check) and on-demand after topology changes (hot-swap via SemVerX).  
+- For black-box actor NFA inversion tests, use CRIF to measure how QA perturbations (controlled \(\Delta\) changes in inputs at \(Z\)) propagate to reduced coherence at \(X\). The gradient \(\nabla_\theta C\) indicates sensitivity and problem loci.  
+- Persist CRIF results in the Registry (e.g., `registry.obinexus.org`) as part of the audit trail and as input to automated SemVerX rollback decisions.
